@@ -1,4 +1,6 @@
 import type { Metadata, Viewport } from "next";
+import "@fontsource-variable/archivo/wdth.css";
+import "@fontsource-variable/inter";
 import "./globals.css";
 import { currentUser } from "@/lib/auth";
 import { TabBar } from "@/components/TabBar";
@@ -13,8 +15,8 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "#f4f4f6" },
-    { media: "(prefers-color-scheme: dark)", color: "#000000" },
+    { media: "(prefers-color-scheme: light)", color: "#f2f4fa" },
+    { media: "(prefers-color-scheme: dark)", color: "#060914" },
   ],
 };
 
@@ -27,7 +29,7 @@ export default async function RootLayout({ children }: { children: React.ReactNo
           <div className="wrap">
             <a href="/" className="brand" aria-label="Far Post home">
               <span className="brand-mark" aria-hidden />
-              Far Post
+              <span>Far <span className="post">Post</span></span>
             </a>
             <nav className="top-links">
               {user?.is_admin && <a className="chip" href="/admin">Admin</a>}

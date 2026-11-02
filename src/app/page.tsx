@@ -4,6 +4,8 @@ import { overview, weekFixtures, fixtureState, freshness, myLeagues, picksFor } 
 import { AutoRefresh } from "@/components/AutoRefresh";
 import { StatusPill, ago, fmtDate } from "@/components/StatusPill";
 import { FixtureRow } from "@/components/FixtureRow";
+import { Pitch } from "@/components/Pitch";
+import { pitchFromResult } from "@/components/pitchData";
 import { redirect } from "next/navigation";
 
 export const dynamic = "force-dynamic";
@@ -20,7 +22,6 @@ export default async function Home() {
   const live = fixtures.filter((f) => fixtureState(f).live);
   const squad = await picksFor(user.id, null);
   const players = o.team?.detail.players ?? [];
-  const names = o.cur ? new Map((await picksFor(user.id, o.cur.number)).map((p) => [p.player_id, p])) : new Map();
 
   return (
     <>
@@ -36,11 +37,10 @@ export default async function Home() {
       {o.cur && o.team ? (
         <section className="hero">
           <div className="hero-top">
-            <span style={{ fontWeight: 700 }}>Week {o.cur.number}</span>
+            <span className="hero-week">Week {o.cur.number} · {user.team_name}</span>
             <StatusPill status={o.team.status} partial={o.team.detail.partial} />
           </div>
           <div className="hero-score">{o.team.points}</div>
-          <div className="sub">{user.team_name}</div>
           <div className="hero-meta">
             <div className="stat"><span className="num">{o.average ?? "–"}</span><span>Average</span></div>
             <div className="stat"><span className="num">{o.highest ?? "–"}</span><span>Highest</span></div>
@@ -53,42 +53,25 @@ export default async function Home() {
         </section>
       ) : (
         <section className="hero">
-          <div className="hero-top"><span style={{ fontWeight: 700 }}>{o.next ? `Week ${o.next.number}` : "Far Post"}</span></div>
-          <div className="hero-score" style={{ fontSize: 44 }}>{o.next ? fmtDate(o.next.deadline, { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "–"}</div>
+          <div className="hero-top"><span className="hero-week">{o.next ? `Week ${o.next.number}` : "Far Post"}</span></div>
+          <div className="hero-score plain">{o.next ? fmtDate(o.next.deadline, { weekday: "short", hour: "2-digit", minute: "2-digit" }) : "–"}</div>
           <div className="sub">{o.next ? "Deadline for your first Week" : "No Weeks scheduled yet."}</div>
         </section>
       )}
 
-      {o.next && o.cur && (
-        <div className="spread mt small">
-          <span>Next deadline: Week {o.next.number}</span>
-          <span className="num" style={{ color: "var(--text)" }}>{fmtDate(o.next.deadline)}</span>
-        </div>
+      {o.next && (
+        <a className="ribbon" href="/team">
+          <div><div className="label">Week {o.next.number} deadline</div><div className="num">{fmtDate(o.next.deadline)}</div></div>
+          <span className="chip" style={{ background: "var(--night)", color: "#fff" }}>Pick team →</span>
+        </a>
       )}
 
-      {players.length > 0 && (
+      {o.cur && o.team && (
         <>
-          <h2>Your players this Week</h2>
-          <div className="list">
-            {[...players]
-              .filter((p) => p.counted)
-              .sort((a, b) => b.points * b.multiplier - a.points * a.multiplier)
-              .slice(0, 5)
-              .map((p) => {
-                const info = names.get(p.playerId);
-                return (
-                  <div className="row" key={p.playerId}>
-                    <span className="pos">{info?.position}</span>
-                    <div className="grow">
-                      <div className="title">{info?.name} {p.multiplier === 2 && <span className="badge">C</span>}</div>
-                      <div className="meta">{info?.club} · {p.minutes}′{p.subbedIn ? " · came off the bench" : ""}</div>
-                    </div>
-                    <div className="pts">{p.points * p.multiplier}</div>
-                  </div>
-                );
-              })}
-            <a className="row" href={`/team?week=${o.cur?.number}`}><div className="grow link" style={{ color: "var(--accent)", fontWeight: 600 }}>See full team</div></a>
-          </div>
+          <h2>Your team</h2>
+          <Pitch
+            players={pitchFromResult(await picksFor(user.id, o.cur.number), o.team.detail)}
+          />
         </>
       )}
 
@@ -108,7 +91,7 @@ export default async function Home() {
           <div className="list">
             {leagues.map((l) => (
               <a className="row" key={l.id} href={`/leagues/${l.id}`}>
-                <div className="rank num">{l.rank}</div>
+                <div className={`rank${l.rank === "1" ? " r1" : ""}`}>{l.rank}</div>
                 <div className="grow"><div className="title">{l.name}</div><div className="meta">{l.members} teams</div></div>
                 <div className="pts">{l.total}</div>
               </a>
@@ -122,10 +105,10 @@ export default async function Home() {
 
 function Landing() {
   return (
-    <div style={{ maxWidth: 520, margin: "48px auto", textAlign: "center" }}>
-      <div className="hero-score" style={{ fontSize: 64 }}>Far Post</div>
-      <p className="sub" style={{ fontSize: 18 }}>A fantasy football game for friends. Pick 14 players, score points from real matches, and beat your mates in private leagues.</p>
-      <a className="btn mt" href="/login">Sign in with email</a>
+    <div className="landing">
+      <div className="big">Far<br /><span className="post">Post</span></div>
+      <p className="sub" style={{ fontSize: 18, maxWidth: 440 }}>Fantasy football for friends. Pick fourteen, captain one, and watch the points land live on match day.</p>
+      <div><a className="btn mt" href="/login">Sign in with email</a></div>
       <p className="small mt">Invite-only.</p>
     </div>
   );

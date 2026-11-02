@@ -21,7 +21,7 @@ export default async function Rival({ params, searchParams }: { params: Promise<
   return (
     <>
       <h1>{user.team_name}</h1>
-      {row ? <TeamPoints userId={id} week={week} result={row} /> : <div className="empty">This team has no locked lineup for Week {week} yet. Picks are hidden until the deadline.</div>}
+      {row ? <TeamPoints userId={id} week={week} result={row} teamName={user.team_name} /> : <div className="empty">This team has no locked lineup for Week {week} yet. Picks are hidden until the deadline.</div>}
     </>
   );
 }

@@ -1,6 +1,7 @@
 // Read-only queries behind the pages.
 import { getSetting, one, q } from "../db";
 import type { Position } from "../game/rules";
+import type { Kit } from "../kits";
 import { FINISHED, LIVE } from "../game/weeks";
 import type { TeamWeekResult } from "../scoring/team";
 import { currentWeek, upcomingWeek } from "./teams";
@@ -19,12 +20,14 @@ export interface FixtureView {
   home_goals: number | null;
   away_goals: number | null;
   week_number: number | null;
+  home_kit: Kit;
+  away_kit: Kit;
 }
 
 export async function weekFixtures(week: number): Promise<FixtureView[]> {
   return q<FixtureView>(
     `SELECT f.id, f.kickoff, f.status, f.minute, h.name AS home, a.name AS away, h.short_name AS home_short, a.short_name AS away_short,
-            f.home_goals, f.away_goals, f.week_number
+            f.home_goals, f.away_goals, f.week_number, h.kit AS home_kit, a.kit AS away_kit
        FROM fixtures f JOIN clubs h ON h.id = f.home_club_id JOIN clubs a ON a.id = f.away_club_id
       WHERE f.week_number = $1 ORDER BY f.kickoff, f.id`,
     [week],
@@ -34,7 +37,7 @@ export async function weekFixtures(week: number): Promise<FixtureView[]> {
 export async function postponedFixtures(): Promise<FixtureView[]> {
   return q<FixtureView>(
     `SELECT f.id, f.kickoff, f.status, f.minute, h.name AS home, a.name AS away, h.short_name AS home_short, a.short_name AS away_short,
-            f.home_goals, f.away_goals, f.week_number
+            f.home_goals, f.away_goals, f.week_number, h.kit AS home_kit, a.kit AS away_kit
        FROM fixtures f JOIN clubs h ON h.id = f.home_club_id JOIN clubs a ON a.id = f.away_club_id
       WHERE f.week_number IS NULL AND f.status IN ('PST','TBD') ORDER BY f.kickoff`,
   );
@@ -82,11 +85,12 @@ export interface PickView {
   is_captain: boolean;
   is_vice: boolean;
   price: number;
+  kit: Kit;
 }
 
 export async function picksFor(userId: number, week: number | null): Promise<PickView[]> {
   return q<PickView>(
-    `SELECT k.player_id, p.name, p.position, c.name AS club, c.short_name AS club_short, k.slot, k.is_captain, k.is_vice, k.price
+    `SELECT k.player_id, p.name, p.position, c.name AS club, c.short_name AS club_short, k.slot, k.is_captain, k.is_vice, k.price, c.kit
        FROM picks k JOIN players p ON p.id = k.player_id JOIN clubs c ON c.id = p.club_id
       WHERE k.user_id = $1 AND k.week_number IS NOT DISTINCT FROM $2 ORDER BY k.slot`,
     [userId, week],
@@ -145,8 +149,8 @@ export async function standings(leagueId: number, week: number | null) {
 }
 
 export async function catalogue() {
-  return q<{ id: number; name: string; position: Position; price: number; club_id: number; club: string; club_short: string; points: string }>(
-    `SELECT p.id, p.name, p.position, p.price, p.club_id, c.name AS club, c.short_name AS club_short,
+  return q<{ id: number; name: string; position: Position; price: number; club_id: number; club: string; club_short: string; points: string; kit: Kit }>(
+    `SELECT p.id, p.name, p.position, p.price, p.club_id, c.name AS club, c.short_name AS club_short, c.kit,
             COALESCE((SELECT sum(x.points) FROM player_points x WHERE x.player_id = p.id), 0) AS points
        FROM players p JOIN clubs c ON c.id = p.club_id
       WHERE p.published AND p.approved AND p.price IS NOT NULL ORDER BY p.price DESC, p.name`,

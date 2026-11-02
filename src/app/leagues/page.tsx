@@ -46,7 +46,7 @@ export default async function Leagues({ searchParams }: { searchParams: Promise<
       <div className="list mt">
         {leagues.map((l) => (
           <a className="row" key={l.id} href={`/leagues/${l.id}`}>
-            <div className="rank num">{l.rank}</div>
+            <div className={`rank${l.rank === "1" ? " r1" : ""}`}>{l.rank}</div>
             <div className="grow"><div className="title">{l.name}</div><div className="meta">{l.members} teams · from Week {l.start_week}</div></div>
             <div className="pts">{l.total}</div>
           </a>

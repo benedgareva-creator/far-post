@@ -1,5 +1,6 @@
 // Copies clubs, players and the fixture list from the data supplier into our database,
 // and keeps Week deadlines and match-to-Week assignments up to date.
+import { kitFor } from "../kits";
 import { getSetting, one, q, type Db, pool } from "../db";
 import { assignFixtureWeek, FINISHED, LIVE, nextDeadline, VOID, type WeekTiming } from "../game/weeks";
 import type { FixtureDetail, FootballProvider, ProviderFixture, ProviderPlayer } from "../provider/types";
@@ -9,9 +10,9 @@ export async function upsertClubs(provider: FootballProvider, db: Db = pool()) {
   if (!res.ok) return res;
   for (const c of res.data) {
     await q(
-      `INSERT INTO clubs (provider_id, name, short_name) VALUES ($1,$2,$3)
-       ON CONFLICT (provider_id) DO UPDATE SET name = EXCLUDED.name, short_name = EXCLUDED.short_name`,
-      [c.providerId, c.name, c.shortName],
+      `INSERT INTO clubs (provider_id, name, short_name, kit) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (provider_id) DO UPDATE SET name = EXCLUDED.name, short_name = EXCLUDED.short_name, kit = COALESCE(clubs.kit, EXCLUDED.kit)`,
+      [c.providerId, c.name, c.shortName, JSON.stringify(kitFor(c.providerId))],
       db,
     );
   }

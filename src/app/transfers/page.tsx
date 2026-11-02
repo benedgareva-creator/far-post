@@ -7,6 +7,7 @@ import { catalogue } from "@/lib/services/views";
 import { SquadBuilder, TransferMarket } from "@/components/SquadPicker";
 import { fmtDate } from "@/components/StatusPill";
 import type { Position } from "@/lib/game/rules";
+import type { Kit } from "@/lib/kits";
 
 export const dynamic = "force-dynamic";
 
@@ -16,8 +17,8 @@ export default async function Transfers() {
   const now = await gameNow();
   const next = await upcomingWeek(now);
   const cat = (await catalogue()).map((p) => ({ ...p, points: Number(p.points) }));
-  const squad = await q<{ id: number; name: string; position: Position; price: number; club_id: number; club_short: string; purchase_price: number; points: string }>(
-    `SELECT p.id, p.name, p.position, p.price, p.club_id, c.short_name AS club_short, s.purchase_price,
+  const squad = await q<{ id: number; name: string; position: Position; price: number; club_id: number; club_short: string; purchase_price: number; points: string; kit: Kit }>(
+    `SELECT p.id, p.name, p.position, p.price, p.club_id, c.short_name AS club_short, c.kit, s.purchase_price,
             COALESCE((SELECT sum(x.points) FROM player_points x WHERE x.player_id = p.id), 0) AS points
        FROM squad_players s JOIN players p ON p.id = s.player_id JOIN clubs c ON c.id = p.club_id WHERE s.user_id = $1`,
     [user.id],

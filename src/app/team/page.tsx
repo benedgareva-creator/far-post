@@ -38,12 +38,18 @@ export default async function Team({ searchParams }: { searchParams: Promise<{ w
       <>
         <h1>My team</h1>
         {chips}
-        {next && <p className="small">Changes lock at the Week {next.number} deadline: <strong>{fmtDate(next.deadline)}</strong>. Your team carries forward if you change nothing.</p>}
+        {next && (
+          <div className="ribbon">
+            <div><div className="label">Week {next.number} deadline</div><div className="num">{fmtDate(next.deadline)}</div></div>
+            <a className="chip" href="/transfers" style={{ background: "var(--night)", color: "#fff" }}>Transfers</a>
+          </div>
+        )}
         <LineupEditor
           initial={picks.map((p) => {
             const games = fx.get(clubMap.get(p.player_id)!) ?? [];
             const next = games.length === 0 ? "No match this Week" : games.map((g: { opp: string; home: boolean }) => `${g.opp} (${g.home ? "H" : "A"})`).join(", ");
-            return { playerId: p.player_id, name: p.name, position: p.position, club: p.club_short, slot: p.slot, isCaptain: p.is_captain, isVice: p.is_vice, next };
+            const nextShort = games.length === 0 ? "No match" : games.map((g: { opp: string; home: boolean }) => `${g.opp}${g.home ? "" : " (a)"}`).join(" + ");
+            return { playerId: p.player_id, name: p.name, position: p.position, club: p.club_short, slot: p.slot, isCaptain: p.is_captain, isVice: p.is_vice, next, nextShort, kit: p.kit };
           })}
         />
       </>

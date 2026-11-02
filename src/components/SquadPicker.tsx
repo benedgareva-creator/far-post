@@ -2,6 +2,9 @@
 import { useMemo, useState, useTransition } from "react";
 import { BUDGET, MAX_PER_CLUB, SQUAD_SHAPE, POSITION_NAMES, type Position } from "@/lib/game/rules";
 import { createSquadAction, transferAction } from "@/app/transfers/actions";
+import type { Kit } from "@/lib/kits";
+import { Shirt } from "./Shirt";
+import { SquadBoard, type BoardSlot } from "./Pitch";
 
 export interface CatPlayer {
   id: number;
@@ -11,6 +14,17 @@ export interface CatPlayer {
   club_id: number;
   club_short: string;
   points: number;
+  kit: Kit;
+}
+
+function board(players: (CatPlayer & { label?: string; note?: string })[]): BoardSlot[] {
+  return POS.flatMap((pos) => {
+    const here = players.filter((p) => p.position === pos);
+    return Array.from({ length: SQUAD_SHAPE[pos] }, (_, i) => ({
+      position: pos,
+      player: here[i] ? { id: here[i].id, name: here[i].name, kit: here[i].kit, stat: here[i].label ?? `${here[i].club_short} · ${here[i].price}`, note: here[i].note } : undefined,
+    }));
+  });
 }
 
 const POS: Position[] = ["GK", "DEF", "MID", "FWD"];
@@ -51,10 +65,10 @@ function PlayerList({ players, onPick, disabled, filterPos, setFilterPos, owned 
           const why = disabled(p);
           return (
             <button key={p.id} className={`row${why ? " dim" : ""}`} style={{ all: "unset", display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: "1px solid var(--line)", cursor: why ? "default" : "pointer", width: "100%", boxSizing: "border-box", opacity: why ? 0.5 : 1 }} onClick={() => !why && onPick(p)} aria-disabled={!!why} title={why ?? `Add ${p.name}`}>
-              <span className="pos">{p.position}</span>
+              <span className="mini-shirt"><Shirt kit={p.kit} keeper={p.position === "GK"} size={36} /></span>
               <div className="grow" style={{ flex: 1, minWidth: 0 }}>
                 <div className="title">{p.name}</div>
-                <div className="meta">{p.club_short} · {p.points} pts{why ? ` · ${why}` : ""}</div>
+                <div className="meta">{p.position} · {p.club_short} · {p.points} pts{why ? ` · ${why}` : ""}</div>
               </div>
               <div className="pts" style={{ fontSize: 20 }}>{p.price}</div>
             </button>
@@ -90,28 +104,15 @@ export function SquadBuilder({ catalogue }: { catalogue: CatPlayer[] }) {
           <div className="stat"><span className="num">{BUDGET - spent}</span><span>Left to spend</span></div>
         </div>
       </div>
-      {picked.length > 0 && (
-        <>
-          <h2>Your picks</h2>
-          <div className="list">
-            {POS.flatMap((pos) => picked.filter((p) => p.position === pos)).map((p) => (
-              <div className="row" key={p.id}>
-                <span className="pos">{p.position}</span>
-                <div className="grow"><div className="title">{p.name}</div><div className="meta">{p.club_short}</div></div>
-                <span className="num">{p.price}</span>
-                <button className="chip" onClick={() => setPicked(picked.filter((x) => x.id !== p.id))} aria-label={`Remove ${p.name}`}>Remove</button>
-              </div>
-            ))}
-          </div>
-        </>
-      )}
+      <p className="small">Tap an empty shirt to choose that position, or tap a player to remove them.</p>
+      <SquadBoard slots={board(picked)} onTapEmpty={(pos) => { setFilterPos(pos); document.getElementById("market")?.scrollIntoView({ behavior: "smooth" }); }} onTapPlayer={(id) => setPicked(picked.filter((x) => x.id !== id))} />
       {msg && <div className={`notice mt ${msg.ok ? "ok" : "error"}`}>{msg.text}</div>}
       <button className="btn block mt" disabled={picked.length !== 14 || pending} onClick={() => start(async () => {
         const r = await createSquadAction(picked.map((p) => p.id));
         setMsg({ ok: r.ok, text: r.message });
         if (r.ok) window.location.href = "/team";
       })}>{pending ? "Saving…" : picked.length === 14 ? "Save squad" : `Pick ${14 - picked.length} more`}</button>
-      <h2>Add players</h2>
+      <h2 id="market">Add players</h2>
       <PlayerList players={catalogue} owned={owned} filterPos={filterPos} setFilterPos={setFilterPos} disabled={disabled} onPick={(p) => setPicked([...picked, p])} />
     </div>
   );
@@ -136,7 +137,7 @@ export function TransferMarket({ catalogue, squad, bank, remaining }: { catalogu
   return (
     <div>
       <div className="hero">
-        <div className="hero-meta" style={{ marginTop: 0 }}>
+        <div className="hero-meta" style={{ marginTop: 0, gridTemplateColumns: "1fr 1fr" }}>
           <div className="stat"><span className="num">{bankAfter}</span><span>In the bank</span></div>
           <div className="stat"><span className="num">{left === null ? "∞" : left}</span><span>{left === null ? "Free until first deadline" : "Transfers left this Week"}</span></div>
         </div>
@@ -161,21 +162,15 @@ export function TransferMarket({ catalogue, squad, bank, remaining }: { catalogu
         </>
       )}
       {msg && <div className={`notice mt ${msg.ok ? "ok" : "error"}`}>{msg.text}</div>}
-      <h2>{selling ? `Replace ${selling.name}` : "Your squad: tap a player to sell"}</h2>
+      <h2>{selling ? `Replace ${selling.name}` : "Tap a player to replace them"}</h2>
       {!selling && (
-        <div className="list">
-          {POS.flatMap((pos) => after.filter((p) => p.position === pos)).map((p) => {
-            const isNew = swaps.some((s) => s.in.id === p.id);
-            const canSell = !isNew && (left === null || left > 0);
-            return (
-              <button key={p.id} style={{ all: "unset", display: "flex", alignItems: "center", gap: 12, padding: "12px 16px", borderBottom: "1px solid var(--line)", width: "100%", boxSizing: "border-box", cursor: canSell ? "pointer" : "default" }} onClick={() => canSell && setSelling(squad.find((x) => x.id === p.id)!)}>
-                <span className="pos">{p.position}</span>
-                <div style={{ flex: 1, minWidth: 0 }}><div className="title">{p.name}{isNew ? " (new)" : ""}</div><div className="meta">{p.club_short} · {p.points} pts</div></div>
-                <div className="pts" style={{ fontSize: 20 }}>{p.cost}</div>
-              </button>
-            );
-          })}
-        </div>
+        <SquadBoard
+          slots={board(after.map((p) => ({ ...p, price: p.cost, note: swaps.some((x) => x.in.id === p.id) ? "NEW" : undefined })))}
+          onTapPlayer={(id) => {
+            const p = squad.find((x) => x.id === id);
+            if (p && (left === null || left > 0) && !swaps.some((x) => x.in.id === id)) setSelling(p);
+          }}
+        />
       )}
       {selling && (
         <>
