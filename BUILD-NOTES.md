@@ -45,3 +45,24 @@ All in `src/lib/provider/apiFootball.ts`, function `parseDetail`:
 - Rights clearance (spec section 8) is Ben's step before inviting anyone.
 - No manual deadline override in Admin → Weeks (read-only); deadlines come from the schedule.
 - The real adapter is unit-tested against a fake server only; it has never seen a real response.
+
+## Codex review fixes (2026-11-03)
+
+A single read-only Codex review found 16 problems. All are fixed, each with a regression test in `tests/review.test.ts` (61 tests pass in total).
+
+1. **Critical. Edits after a deadline leaked into the closed Week.** Every edit now copies the team into any Week whose deadline has passed but which the poller has not locked yet. It does this under the team's row lock and re-reads the clock after the lock.
+2. **A lineup save could bring back a sold player.** Lineup saves now take the same lock as transfers and run serializably.
+3. **Missing stats counted as "did not play".** A player's participation is known only from their own minutes, or from their club's list arriving without them. Until then auto-subs and the vice-captain wait. A match cannot become final until both clubs' lists have arrived.
+4. **Incomplete data at 72 hours stayed provisional for ever.** A recheck now counts only if the match came back. A match left out of the reply is retried after 15 minutes. A match still incomplete after 72 hours is retried every 6 hours for up to 14 days, with an alert. There is also an extra 7-day recheck.
+5. **Later corrections were missed.** A changed final score is held as a "score" correction. Approving it rescores every player in the match and every team, in one transaction. Admin > Corrections can also fetch any match again.
+6. **Wrong Week for a match first seen live.** The Week is fixed only when the match is first seen started, using that update's kickoff.
+7. **Supplier stops and budgets applied too late.** Every request is now checked before it is sent and recorded the moment it returns. A block, a rate limit or a used-up day stops the rest of the pass. "Day exhausted" stops all requests until midnight UTC. Background jobs stop at 90% of the day.
+8. **Not invite-only.** Only invited emails, existing players and admins can sign in. Ben invites people from Admin > People.
+9. **Seven-day freeze bypass.** The stored deadline freezes once it is within seven days, before any schedule change is applied. Freezing also runs every poller pass.
+10. **Real-data startup.** Daily jobs load clubs and squads before the fixture list. Admin > Weeks has a "Before launch" checklist and sets the launch round, which is allowed only until the first Week locks.
+11. **Inconsistent backups.** The export runs as one read-only snapshot. Invites are included and restored too.
+12. **Transfers that only work together.** Club limits and the budget are now checked on the whole batch of transfers. Problems show as warnings and block Confirm.
+13. **Players could not see the rules.** A new `/rules` page shows this Week's rules and any dated upcoming changes. The player market shows each club's opponents for the Week, including doubles and blanks.
+14. **Time zone.** Every time is labelled GMT or BST.
+15. **Email allowance.** Every email is counted against the daily and monthly limits (`EMAIL_DAY_LIMIT`, `EMAIL_MONTH_LIMIT`). Sign-in links and invites stop short of the limit so alerts still go out. Failed alert emails are retried up to 5 times. The sign-in limits can no longer be beaten by many requests sent at once.
+16. **Tied ranks.** Teams level on points share a rank (shown "=1") in both the table and the league card.

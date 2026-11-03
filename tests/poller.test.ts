@@ -71,7 +71,8 @@ describe("poller", () => {
 
   it("uses five calls a minute on the Free plan", async () => {
     await q("DELETE FROM api_requests");
-    const provider = withFaults(new MockProvider({ anchor, now: () => clock }), async () => null);
+    // The supplier reports Free-plan limits in its replies.
+    const provider = withFaults(new MockProvider({ anchor, now: () => clock, dayLimit: 100, minuteLimit: 10 }), async () => null);
     new Poller({ provider, now: () => clock, sleep: async (ms) => { sleeps.push(ms); clock = new Date(clock.getTime() + ms); }, log: () => {}, limits: { day: 100, minute: 10 } });
     sleeps.length = 0;
     await provider.getFixtures();

@@ -36,6 +36,7 @@ export class ApiFootballProvider implements FootballProvider {
   readonly name = "api-football";
   readonly batchSize: number;
   throttle?: () => Promise<void>;
+  onCall?: (meta: CallMeta) => Promise<void>;
   private fetchImpl: typeof fetch;
 
   constructor(private opts: ApiFootballOptions) {
@@ -48,6 +49,12 @@ export class ApiFootballProvider implements FootballProvider {
   }
 
   private async call(path: string, params: Record<string, string>): Promise<{ meta: CallMeta; body: Json | null }> {
+    const out = await this.send(path, params);
+    if (this.onCall) await this.onCall(out.meta);
+    return out;
+  }
+
+  private async send(path: string, params: Record<string, string>): Promise<{ meta: CallMeta; body: Json | null }> {
     const url = new URL(path, this.opts.baseUrl.endsWith("/") ? this.opts.baseUrl : this.opts.baseUrl + "/");
     for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
     const endpoint = `${path}?${new URLSearchParams(params).toString()}`;

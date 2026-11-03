@@ -24,6 +24,7 @@ export function withFaults(inner: FootballProvider, fault: () => Promise<Fault>)
         dayExhausted: f === "day",
         error: f === "rate" ? "rateLimit: Too many requests" : f === "block" ? "access: Your account is suspended" : "requests: Daily limit reached",
       };
+      if (inner.onCall) await inner.onCall(meta);
       return { ok: false, error: meta.error!, calls: [meta] };
     };
   const p: FootballProvider = {
@@ -41,6 +42,10 @@ export function withFaults(inner: FootballProvider, fault: () => Promise<Fault>)
   Object.defineProperty(p, "throttle", {
     get: () => inner.throttle,
     set: (v) => (inner.throttle = v),
+  });
+  Object.defineProperty(p, "onCall", {
+    get: () => inner.onCall,
+    set: (v) => (inner.onCall = v),
   });
   return p;
 }

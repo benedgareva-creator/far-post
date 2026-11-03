@@ -1,12 +1,35 @@
-import { requireAdmin } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { inviteEmails, requireAdmin, withdrawInvite } from "@/lib/auth";
+import { logAdmin } from "@/lib/services/alerts";
 import { q } from "@/lib/db";
 import { AdminNav } from "@/components/AdminNav";
 import { fmtDate } from "@/components/StatusPill";
 
 export const dynamic = "force-dynamic";
 
-export default async function People() {
+async function invite(formData: FormData) {
+  "use server";
+  const admin = await requireAdmin();
+  const r = await inviteEmails(admin.id, String(formData.get("emails") ?? ""));
+  await logAdmin(admin.id, "invite", { invited: r.invited.length });
+  const parts = [`Invited ${r.invited.length}.`];
+  if (r.skipped.length) parts.push(`Skipped ${r.skipped.length} (already invited or not an email).`);
+  if (r.notEmailed.length) parts.push(`Could not email ${r.notEmailed.join(", ")}: they can still sign in at the login page.`);
+  redirect(`/admin/people?m=${encodeURIComponent(parts.join(" "))}`);
+}
+
+async function withdraw(formData: FormData) {
+  "use server";
+  const admin = await requireAdmin();
+  await withdrawInvite(String(formData.get("email") ?? ""));
+  await logAdmin(admin.id, "withdraw invite", {});
+  redirect("/admin/people");
+}
+
+export default async function People({ searchParams }: { searchParams: Promise<{ m?: string }> }) {
   await requireAdmin();
+  const { m } = await searchParams;
+  const pending = await q<{ email: string; created_at: Date }>("SELECT email, created_at FROM invites WHERE used_at IS NULL ORDER BY created_at DESC");
   const users = await q<{ id: number; email: string; team_name: string | null; joined_week: number | null; is_admin: boolean; created_at: Date; total: string }>(
     "SELECT u.id, u.email, u.team_name, u.joined_week, u.is_admin, u.created_at, COALESCE((SELECT sum(points) FROM team_week_points t WHERE t.user_id = u.id), 0) AS total FROM users u ORDER BY u.created_at",
   );
@@ -19,6 +42,29 @@ export default async function People() {
   return (
     <>
       <AdminNav active="/admin/people" />
+      {m && <div className="notice ok">{m}</div>}
+      <h2>Invite people</h2>
+      <div className="card">
+        <p className="small">Far Post is invite-only: only emails on this list (and existing players) can sign in. Each person gets an email telling them how.</p>
+        <form action={invite} className="mt">
+          <label htmlFor="emails">Email addresses (one per line, or separated by commas)</label>
+          <textarea id="emails" name="emails" rows={3} required placeholder={"sam@example.com\nalex@example.com"} />
+          <button className="btn block mt" type="submit">Send invitations</button>
+        </form>
+      </div>
+      {pending.length > 0 && (
+        <>
+          <h2>Invited, not signed in yet ({pending.length})</h2>
+          <div className="list">
+            {pending.map((i) => (
+              <div className="row" key={i.email}>
+                <div className="grow"><div className="title">{i.email}</div><div className="meta">Invited {fmtDate(i.created_at)}</div></div>
+                <form action={withdraw}><input type="hidden" name="email" value={i.email} /><button className="btn secondary small" type="submit">Withdraw</button></form>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
       <h2>People ({users.length})</h2>
       <div className="card scroll-x">
         <table className="table">

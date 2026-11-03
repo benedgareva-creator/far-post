@@ -46,9 +46,9 @@ export default async function League({ params, searchParams }: { params: Promise
           <span className="small" style={{ width: 48, textAlign: "right" }}>Week</span>
           <span className="small" style={{ width: 54, textAlign: "right" }}>Total</span>
         </div>
-        {table.map((t, i) => (
+        {table.map((t) => (
           <a className="row" key={t.user_id} href={t.user_id === user.id ? "/team" : `/teams/${t.user_id}`} style={t.user_id === user.id ? { background: "var(--ok-soft)" } : undefined}>
-            <span className={`rank${i === 0 ? " r1" : ""}`}>{i + 1}</span>
+            <span className={`rank${t.rank === "1" ? " r1" : ""}`} title={t.tied ? "Level on points" : undefined}>{t.tied ? "=" : ""}{t.rank}</span>
             <div className="grow"><div className="title">{t.team_name ?? "Unnamed team"}</div></div>
             <span className="num" style={{ width: 48, textAlign: "right", color: "var(--muted)" }}>{t.week_points ?? "–"}</span>
             <span className="pts" style={{ width: 54 }}>{t.total}</span>

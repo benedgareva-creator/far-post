@@ -83,7 +83,10 @@ export async function rescoreFixture(fixtureId: number, now: Date, db: Db = pool
     db,
   );
   const finished = FINISHED.has(f.status);
-  let anyPending = false;
+  // Both clubs' player lists must have arrived before a match can be complete: a missing list means
+  // we do not yet know who played, which is not the same as nobody playing.
+  const bothRosters = new Set(rows.map((r) => r.club_id)).size >= 2;
+  let anyPending = !bothRosters;
   for (const r of rows) {
     const score = scorePlayerMatch(statLine(r), r.position, rules);
     if (score.pending.length) anyPending = true;
@@ -105,6 +108,50 @@ export async function rescoreFixture(fixtureId: number, now: Date, db: Db = pool
     await q("UPDATE player_points SET status = 'final' WHERE fixture_id = $1", [fixtureId], db);
   }
   return f.week_number;
+}
+
+/**
+ * Re-scores a match whose points are already final, after Ben approves a correction. Uses the rules
+ * the Week locked with, keeps every row final, and returns the Week so team totals can be updated.
+ */
+export async function rescoreFinalFixture(fixtureId: number, db: Db = pool()): Promise<number | null> {
+  const f = await one<{ week_number: number | null }>("SELECT week_number FROM fixtures WHERE id = $1", [fixtureId], db);
+  if (!f || f.week_number === null) return null;
+  const { id: rulesetId, rules } = await rulesForWeek(f.week_number, db);
+  const rows = await q<StatRow>(
+    `SELECT s.*, p.position, fx.home_club_id, fx.home_goals, fx.away_goals
+       FROM player_match_stats s JOIN players p ON p.id = s.player_id JOIN fixtures fx ON fx.id = s.fixture_id
+      WHERE s.fixture_id = $1`,
+    [fixtureId],
+    db,
+  );
+  for (const r of rows) {
+    const score = scorePlayerMatch(statLine(r), r.position, rules);
+    await q(
+      `INSERT INTO player_points (fixture_id, player_id, week_number, points, minutes, breakdown, pending, status, ruleset_id, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'final',$8, now())
+       ON CONFLICT (fixture_id, player_id) DO UPDATE SET points = EXCLUDED.points, minutes = EXCLUDED.minutes,
+         breakdown = EXCLUDED.breakdown, pending = EXCLUDED.pending, status = 'final', updated_at = now()`,
+      [fixtureId, r.player_id, f.week_number, score.points, score.minutes, JSON.stringify(score.breakdown), JSON.stringify(score.pending), rulesetId],
+      db,
+    );
+  }
+  return f.week_number;
+}
+
+/** What each player's points would be in a final match under a different score (for the Corrections page). */
+export async function pointsUnderScore(fixtureId: number, score: { home_goals: number | null; away_goals: number | null } | null, db: Db = pool()) {
+  const f = await one<{ week_number: number | null }>("SELECT week_number FROM fixtures WHERE id = $1", [fixtureId], db);
+  if (!f || f.week_number === null) return new Map<number, number>();
+  const { rules } = await rulesForWeek(f.week_number, db);
+  const rows = await q<StatRow>(
+    `SELECT s.*, p.position, fx.home_club_id, fx.home_goals, fx.away_goals
+       FROM player_match_stats s JOIN players p ON p.id = s.player_id JOIN fixtures fx ON fx.id = s.fixture_id
+      WHERE s.fixture_id = $1`,
+    [fixtureId],
+    db,
+  );
+  return new Map(rows.map((r) => [r.player_id, scorePlayerMatch(statLine(score ? { ...r, ...score } : r), r.position, rules).points]));
 }
 
 /** Recomputes every locked team's total for a Week. */
@@ -144,14 +191,22 @@ export async function playerWeekFixtures(week: number, playerIds: number[], db: 
     pstatus: PointsStatus | null;
     pending: string[] | null;
     fixture_final: boolean | null;
+    stat_minutes: number | null;
+    has_stats: boolean;
+    roster_known: boolean;
   }>(
     `SELECT p.id AS player_id, f.id AS fixture_id, f.status AS fstatus, pp.points, pp.minutes, pp.status AS pstatus, pp.pending,
-            (SELECT bool_or(x.status = 'final') FROM player_points x WHERE x.fixture_id = f.id) AS fixture_final
+            (SELECT bool_or(x.status = 'final') FROM player_points x WHERE x.fixture_id = f.id) AS fixture_final,
+            s.minutes AS stat_minutes, (s.player_id IS NOT NULL) AS has_stats,
+            EXISTS (SELECT 1 FROM player_match_stats r
+                     WHERE r.fixture_id = f.id AND r.club_id IN (f.home_club_id, f.away_club_id)
+                       AND r.club_id = COALESCE(s.club_id, p.club_id)) AS roster_known
        FROM players p
        JOIN fixtures f ON f.week_number = $1
         AND (f.home_club_id = p.club_id OR f.away_club_id = p.club_id
              OR EXISTS (SELECT 1 FROM player_points x WHERE x.fixture_id = f.id AND x.player_id = p.id))
        LEFT JOIN player_points pp ON pp.fixture_id = f.id AND pp.player_id = p.id
+       LEFT JOIN player_match_stats s ON s.fixture_id = f.id AND s.player_id = p.id
       WHERE p.id = ANY($2::int[])`,
     [week, playerIds],
     db,
@@ -159,14 +214,19 @@ export async function playerWeekFixtures(week: number, playerIds: number[], db: 
   for (const r of rows) {
     if (VOID.has(r.fstatus)) continue; // abandoned: void
     const finished = FINISHED.has(r.fstatus);
+    // Participation is known only from evidence: the player's own minutes, or their club's player
+    // list having arrived without them in it. A finished match with no data yet stays unresolved,
+    // so auto-subs and the vice-captain wait instead of treating a late stat line as "did not play".
+    const confirmed = r.has_stats ? r.stat_minutes !== null : r.roster_known;
+    const resolved = finished && confirmed;
     const entry: PlayerWeekFixture = {
       fixtureId: r.fixture_id,
       points: r.points ?? 0,
       minutes: r.minutes ?? 0,
-      resolved: finished,
+      resolved,
       // A player who did not feature has no points row: use the match's own status.
-      status: r.pstatus ?? (r.fixture_final ? "final" : finished ? "provisional" : "live"),
-      pending: (r.pending ?? []).length > 0,
+      status: r.pstatus ?? (!resolved ? (finished ? "provisional" : "live") : r.fixture_final ? "final" : "provisional"),
+      pending: (r.pending ?? []).length > 0 || (finished && !confirmed),
     };
     map.set(r.player_id, [...(map.get(r.player_id) ?? []), entry]);
   }

@@ -28,11 +28,17 @@ export interface WeekTiming {
 /** Recompute a Week's deadline from its round, respecting the seven-day freeze. */
 export function nextDeadline(current: WeekTiming | null, round: RoundFixture[], now: Date): { deadline: Date; frozen: boolean } | null {
   if (current?.frozen) return { deadline: current.deadline, frozen: true };
+  // The stored deadline is what managers were told. Once it is within seven days it is fixed, even if
+  // the round has since moved: check this before looking at the new schedule.
+  if (current && shouldFreeze(current.deadline, now)) return { deadline: current.deadline, frozen: true };
   const scheduled = round.filter((f) => !NOT_SCHEDULED.has(f.status)).map((f) => f.kickoff.getTime());
   if (scheduled.length === 0) return current ? { deadline: current.deadline, frozen: current.frozen } : null;
   const deadline = new Date(Math.min(...scheduled) - DEADLINE_BEFORE_KICKOFF_MS);
-  const frozen = deadline.getTime() - now.getTime() <= FREEZE_BEFORE_DEADLINE_MS;
-  return { deadline, frozen };
+  return { deadline, frozen: shouldFreeze(deadline, now) };
+}
+
+export function shouldFreeze(deadline: Date, now: Date): boolean {
+  return deadline.getTime() - now.getTime() <= FREEZE_BEFORE_DEADLINE_MS;
 }
 
 /** Which Week a kickoff falls in, given Weeks sorted by number. null = before Week 1. */
@@ -45,12 +51,16 @@ export function weekForKickoff(kickoff: Date, weeks: WeekTiming[]): number | nul
   return found;
 }
 
-/** Assign a fixture to a Week. Started fixtures keep their existing Week. */
+/**
+ * Assign a fixture to a Week. weekFixed is set the first time the match is seen started (with the
+ * kickoff from that same update), so a match keeps that Week through suspensions and resumptions,
+ * but a Week guessed while it was only scheduled is never kept if the kickoff moved.
+ */
 export function assignFixtureWeek(
-  f: { kickoff: Date; status: string; started: boolean; currentWeek: number | null },
+  f: { kickoff: Date; status: string; weekFixed: boolean; currentWeek: number | null },
   weeks: WeekTiming[],
 ): number | null {
-  if (f.started && f.currentWeek !== null) return f.currentWeek;
+  if (f.weekFixed && f.currentWeek !== null) return f.currentWeek;
   if (NOT_SCHEDULED.has(f.status)) return null;
   return weekForKickoff(f.kickoff, weeks);
 }

@@ -3,7 +3,7 @@ import { requireUser } from "@/lib/auth";
 import { now as gameNow } from "@/lib/clock";
 import { q } from "@/lib/db";
 import { transferStatus, upcomingWeek } from "@/lib/services/teams";
-import { catalogue } from "@/lib/services/views";
+import { catalogue, clubFixturesForWeek } from "@/lib/services/views";
 import { SquadBuilder, TransferMarket } from "@/components/SquadPicker";
 import { fmtDate } from "@/components/StatusPill";
 import type { Position } from "@/lib/game/rules";
@@ -16,7 +16,16 @@ export default async function Transfers() {
   if (!user.team_name) redirect("/welcome");
   const now = await gameNow();
   const next = await upcomingWeek(now);
-  const cat = (await catalogue()).map((p) => ({ ...p, points: Number(p.points) }));
+  // Each club's matches in the Week being picked for, so doubles and blanks are visible while choosing.
+  const fx = next ? await clubFixturesForWeek(next.number) : new Map<number, { opp: string; home: boolean }[]>();
+  const nextLabel = (clubId: number) => {
+    if (!next) return undefined;
+    const games = fx.get(clubId) ?? [];
+    if (games.length === 0) return `No match in Week ${next.number}`;
+    const list = games.map((g) => `${g.opp} (${g.home ? "H" : "A"})`).join(", ");
+    return games.length > 1 ? `${games.length} games: ${list}` : list;
+  };
+  const cat = (await catalogue()).map((p) => ({ ...p, points: Number(p.points), next: nextLabel(p.club_id) }));
   const squad = await q<{ id: number; name: string; position: Position; price: number; club_id: number; club_short: string; purchase_price: number; points: string; kit: Kit }>(
     `SELECT p.id, p.name, p.position, p.price, p.club_id, c.short_name AS club_short, c.kit, s.purchase_price,
             COALESCE((SELECT sum(x.points) FROM player_points x WHERE x.player_id = p.id), 0) AS points
@@ -31,13 +40,14 @@ export default async function Transfers() {
         <p className="small">
           {squad.length ? "Changes count from" : "Your team starts at"} the Week {next.number} deadline: <strong>{fmtDate(next.deadline)}</strong>.
           {!squad.length && " 14 players: 2 goalkeepers, 4 defenders, 5 midfielders, 3 forwards, at most 3 from one club, within 100."}
+          {" "}<a className="link" href="/rules">How points are scored</a>
         </p>
       ) : (
         <div className="notice">There is no upcoming deadline, so changes are closed.</div>
       )}
       {cat.length === 0 && <div className="notice warn">Player prices are not published yet. Check back soon.</div>}
       {next && cat.length > 0 && (squad.length ? (
-        <TransferMarket catalogue={cat} squad={squad.map((p) => ({ ...p, points: Number(p.points) }))} bank={status.bank} remaining={status.remaining} />
+        <TransferMarket catalogue={cat} squad={squad.map((p) => ({ ...p, points: Number(p.points), next: nextLabel(p.club_id) }))} bank={status.bank} remaining={status.remaining} />
       ) : (
         <SquadBuilder catalogue={cat} />
       ))}

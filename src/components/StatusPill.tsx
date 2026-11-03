@@ -14,6 +14,11 @@ export function ago(d: Date | string | null, now: Date): string {
   return `${Math.floor(s / 86400)} days ago`;
 }
 
+/**
+ * Dates and times are shown in UK time. Whenever a time of day is shown, the zone is named too
+ * (GMT or BST), so nobody abroad mistakes a deadline for their own local time.
+ */
 export function fmtDate(d: Date | string, opts: Intl.DateTimeFormatOptions = { weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) {
-  return new Intl.DateTimeFormat("en-GB", { ...opts, timeZone: "Europe/London" }).format(new Date(d));
+  const withZone: Intl.DateTimeFormatOptions = opts.hour !== undefined ? { ...opts, timeZoneName: "short" } : opts;
+  return new Intl.DateTimeFormat("en-GB", { ...withZone, timeZone: "Europe/London" }).format(new Date(d));
 }

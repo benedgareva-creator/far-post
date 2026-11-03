@@ -5,16 +5,42 @@ import { sendEmail } from "../email";
 
 export type AlertLevel = "info" | "warning" | "critical";
 
-/** Raises an alert unless the same kind is already open. Emails warnings and critical alerts immediately. */
+export const MAX_ALERT_EMAIL_ATTEMPTS = 5;
+
+/**
+ * Raises an alert unless the same kind is already open. Emails warnings and critical alerts
+ * immediately; if that email fails, it is retried (by the poller and on the next raise) up to five times.
+ */
 export async function raiseAlert(kind: string, level: AlertLevel, message: string, db: Db = pool()): Promise<boolean> {
-  const open = await one("SELECT 1 FROM alerts WHERE kind = $1 AND resolved_at IS NULL", [kind], db);
-  if (open) return false;
-  const row = await one<{ id: number }>("INSERT INTO alerts (level, kind, message) VALUES ($1,$2,$3) RETURNING id", [level, kind, message], db);
-  if (level !== "info") {
-    const res = await sendEmail({ to: config.alertEmails, subject: `Far Post alert: ${message.slice(0, 80)}`, text: `${message}\n\nOpen Admin > Health: ${config.appUrl}/admin` });
-    if (res.ok) await q("UPDATE alerts SET emailed = true WHERE id = $1", [row!.id], db);
+  const open = await one<{ id: number; emailed: boolean; email_attempts: number; level: AlertLevel }>(
+    "SELECT id, emailed, email_attempts, level FROM alerts WHERE kind = $1 AND resolved_at IS NULL",
+    [kind],
+    db,
+  );
+  if (open) {
+    if (open.level !== "info" && !open.emailed && open.email_attempts < MAX_ALERT_EMAIL_ATTEMPTS) await emailAlert(open.id, db);
+    return false;
   }
+  const row = await one<{ id: number }>("INSERT INTO alerts (level, kind, message) VALUES ($1,$2,$3) RETURNING id", [level, kind, message], db);
+  if (level !== "info") await emailAlert(row!.id, db);
   return true;
+}
+
+async function emailAlert(id: number, db: Db) {
+  const a = await one<{ message: string }>("UPDATE alerts SET email_attempts = email_attempts + 1 WHERE id = $1 RETURNING message", [id], db);
+  if (!a) return;
+  const res = await sendEmail({ to: config.alertEmails, subject: `Far Post alert: ${a.message.slice(0, 80)}`, text: `${a.message}\n\nOpen Admin > Health: ${config.appUrl}/admin` }, "alert", db);
+  if (res.ok) await q("UPDATE alerts SET emailed = true WHERE id = $1", [id], db);
+}
+
+/** Tries again to email open warnings and critical alerts whose email failed. */
+export async function retryAlertEmails(db: Db = pool()) {
+  const rows = await q<{ id: number }>(
+    "SELECT id FROM alerts WHERE resolved_at IS NULL AND level <> 'info' AND NOT emailed AND email_attempts < $1",
+    [MAX_ALERT_EMAIL_ATTEMPTS],
+    db,
+  );
+  for (const r of rows) await emailAlert(r.id, db);
 }
 
 export async function resolveAlert(kind: string, db: Db = pool()) {

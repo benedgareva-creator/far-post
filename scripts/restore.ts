@@ -5,7 +5,7 @@ import fs from "node:fs";
 import { pool } from "../src/lib/db";
 
 // Parents before children so foreign keys are satisfied.
-const ORDER = ["users", "clubs", "players", "rulesets", "weeks", "fixtures", "player_match_stats", "player_points", "squad_players", "picks", "transfers", "team_week_points", "leagues", "league_members", "corrections", "alerts", "admin_log", "settings"];
+const ORDER = ["users", "invites", "clubs", "players", "rulesets", "weeks", "fixtures", "player_match_stats", "player_points", "squad_players", "picks", "transfers", "team_week_points", "leagues", "league_members", "corrections", "alerts", "admin_log", "settings"];
 const JSON_COLS = new Set(["config", "breakdown", "pending", "detail", "old_stats", "new_stats", "details", "value"]);
 
 async function main() {

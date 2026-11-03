@@ -15,6 +15,8 @@ export interface CatPlayer {
   club_short: string;
   points: number;
   kit: Kit;
+  /** Matches in the Week being picked for, e.g. "BRW (H)", "2 games: BRW (H), KST (A)" or "No match". */
+  next?: string;
 }
 
 function board(players: (CatPlayer & { label?: string; note?: string })[]): BoardSlot[] {
@@ -68,7 +70,7 @@ function PlayerList({ players, onPick, disabled, filterPos, setFilterPos, owned 
               <span className="mini-shirt"><Shirt kit={p.kit} keeper={p.position === "GK"} size={36} /></span>
               <div className="grow" style={{ flex: 1, minWidth: 0 }}>
                 <div className="title">{p.name}</div>
-                <div className="meta">{p.position} · {p.club_short} · {p.points} pts{why ? ` · ${why}` : ""}</div>
+                <div className="meta">{p.position} · {p.club_short} · {p.points} pts{p.next ? ` · ${p.next}` : ""}{why ? ` · ${why}` : ""}</div>
               </div>
               <div className="pts" style={{ fontSize: 20 }}>{p.price}</div>
             </button>
@@ -127,13 +129,18 @@ export function TransferMarket({ catalogue, squad, bank, remaining }: { catalogu
   const bankAfter = BUDGET - after.reduce((s, p) => s + p.cost, 0);
   const owned = new Set([...squad.map((p) => p.id), ...swaps.map((s) => s.in.id)]);
   const left = remaining === null ? null : remaining - swaps.length;
-  const disabled = (p: CatPlayer) => {
-    if (!selling) return "choose who to sell first";
-    const others = after.filter((x) => x.id !== selling.id);
-    if (others.filter((x) => x.club_id === p.club_id).length >= MAX_PER_CLUB) return `already ${MAX_PER_CLUB} from ${p.club_short}`;
-    if (p.price > bankAfter + selling.purchase_price) return "over budget";
-    return null;
-  };
+  // Club limits and the budget are checked on the finished set of transfers, not one at a time, so
+  // swaps that only work together (e.g. trading players between two clubs you already have three
+  // from) are possible. Problems show as warnings and block Confirm until they are fixed.
+  const disabled = (_p: CatPlayer) => (!selling ? "choose who to sell first" : null);
+  const clubCounts = new Map<number, { n: number; short: string }>();
+  for (const p of after) clubCounts.set(p.club_id, { n: (clubCounts.get(p.club_id)?.n ?? 0) + 1, short: p.club_short });
+  const overClubs = [...clubCounts.values()].filter((c) => c.n > MAX_PER_CLUB);
+  const warnings = [
+    ...overClubs.map((c) => `${c.n} players from ${c.short}: the most is ${MAX_PER_CLUB}. Sell another ${c.short} player too.`),
+    ...(bankAfter < 0 ? [`${-bankAfter} over budget: sell someone more expensive or buy someone cheaper.`] : []),
+    ...(left !== null && left < 0 ? ["More transfers than you have left this Week."] : []),
+  ];
   return (
     <div>
       <div className="hero">
@@ -154,7 +161,8 @@ export function TransferMarket({ catalogue, squad, bank, remaining }: { catalogu
               </div>
             ))}
           </div>
-          <button className="btn block mt" disabled={pending || (left !== null && left < 0) || bankAfter < 0} onClick={() => start(async () => {
+          {warnings.map((w) => <div className="notice error mt" key={w}>{w}</div>)}
+          <button className="btn block mt" disabled={pending || warnings.length > 0} onClick={() => start(async () => {
             const r = await transferAction(swaps.map((s) => ({ out: s.out.id, in: s.in.id })));
             setMsg({ ok: r.ok, text: r.message });
             if (r.ok) { setSwaps([]); setTimeout(() => window.location.reload(), 600); }

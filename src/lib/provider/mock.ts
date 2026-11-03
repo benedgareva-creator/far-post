@@ -136,11 +136,14 @@ export class MockProvider implements FootballProvider {
   }
 
   throttle?: () => Promise<void>;
+  onCall?: (meta: CallMeta) => Promise<void>;
 
   /** Simulates one request: waits for the poller's pacing, then counts it. */
   private async call(endpoint: string): Promise<CallMeta> {
     if (this.throttle) await this.throttle();
-    return this.meta(endpoint);
+    const meta = this.meta(endpoint);
+    if (this.onCall) await this.onCall(meta);
+    return meta;
   }
 
   private meta(endpoint: string): CallMeta {

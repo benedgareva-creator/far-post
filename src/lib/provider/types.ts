@@ -88,8 +88,13 @@ export type ProviderResult<T> = { ok: true; data: T; calls: CallMeta[] } | { ok:
 
 export interface FootballProvider {
   readonly name: string;
-  /** Called before every HTTP request so the poller can space calls out. */
+  /**
+   * Called before every HTTP request so the poller can space calls out. It may throw
+   * RequestRefused to stop the request (blocked, allowance used up, budget reserve).
+   */
   throttle?: () => Promise<void>;
+  /** Called straight after every HTTP request, so each one is counted the moment it happens. */
+  onCall?: (meta: CallMeta) => Promise<void>;
   /** Max fixtures fetched in one live call (1 = per-match fallback). */
   readonly batchSize: number;
   /** Calls one live fetch of n fixtures will cost (for the request budget). */
@@ -103,3 +108,6 @@ export interface FootballProvider {
   getFixtureDetails(fixtureProviderIds: string[]): Promise<ProviderResult<FixtureDetail[]>>;
   getAccountStatus(): Promise<ProviderResult<AccountStatus>>;
 }
+
+/** Thrown by the poller's gate to stop a request before it is sent. */
+export class RequestRefused extends Error {}

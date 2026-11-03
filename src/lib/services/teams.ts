@@ -39,6 +39,7 @@ export async function lockDueWeeks(now: Date, db: Db = pool()): Promise<number[]
            FROM picks k JOIN users u ON u.id = k.user_id
           WHERE k.week_number IS NULL AND u.joined_week IS NOT NULL AND u.joined_week <= $1
             AND (SELECT count(*) FROM picks z WHERE z.user_id = k.user_id AND z.week_number IS NULL) = 14
+            AND NOT EXISTS (SELECT 1 FROM picks d WHERE d.user_id = k.user_id AND d.week_number = $1)
          ON CONFLICT DO NOTHING`,
         [w.number],
         c,
@@ -50,8 +51,39 @@ export async function lockDueWeeks(now: Date, db: Db = pool()): Promise<number[]
   return done;
 }
 
-/** Locks the upcoming Week row for the duration of an edit, and refuses edits after the deadline. */
-async function openWeekForEdit(c: PoolClient, now: Date): Promise<WeekRow> {
+/**
+ * Before one team's editable lineup changes, copy it into every Week whose deadline has passed but
+ * which the poller has not locked yet. Without this, an edit made for next Week in the gap between a
+ * deadline and the poller's lock (or during a poller outage) would leak into the Week already closed.
+ */
+async function snapshotOverdueWeeks(c: PoolClient, userId: number, now: Date) {
+  await q(
+    `INSERT INTO picks (user_id, week_number, player_id, slot, is_captain, is_vice, price)
+     SELECT k.user_id, w.number, k.player_id, k.slot, k.is_captain, k.is_vice, k.price
+       FROM weeks w
+       JOIN users u ON u.id = $1 AND u.joined_week IS NOT NULL AND u.joined_week <= w.number
+       JOIN picks k ON k.user_id = u.id AND k.week_number IS NULL
+      WHERE w.deadline <= $2 AND NOT w.locked
+        AND (SELECT count(*) FROM picks z WHERE z.user_id = u.id AND z.week_number IS NULL) = 14
+        AND NOT EXISTS (SELECT 1 FROM picks d WHERE d.user_id = u.id AND d.week_number = w.number)
+     ON CONFLICT DO NOTHING`,
+    [userId, now],
+    c,
+  );
+}
+
+/**
+ * Opens an edit: takes the team's row lock (every squad or lineup change takes it first, so edits to
+ * one team run one at a time), protects overdue Weeks, then finds the upcoming Week and refuses edits
+ * after its deadline. The clock is re-read after the lock is held, so a request that waited on the
+ * lock across a deadline is refused.
+ */
+async function openWeekForEdit(c: PoolClient, requestedAt: Date, userId: number): Promise<WeekRow> {
+  const waitStart = Date.now();
+  const u = await one("SELECT id FROM users WHERE id = $1 FOR UPDATE", [userId], c);
+  if (!u) throw new GameError("Sign in again.");
+  const now = new Date(requestedAt.getTime() + (Date.now() - waitStart));
+  await snapshotOverdueWeeks(c, userId, now);
   const w = await one<WeekRow>("SELECT * FROM weeks WHERE deadline > $1 ORDER BY number LIMIT 1 FOR SHARE", [now], c);
   if (!w) throw new GameError("There is no upcoming Week to edit.");
   if (w.locked || w.deadline.getTime() <= now.getTime()) throw new GameError("The deadline has passed.");
@@ -79,7 +111,7 @@ function buyable(p: PlayerRow | undefined): p is PlayerRow & { price: number } {
 export async function createSquad(userId: number, playerIds: number[], now: Date) {
   return tx(
     async (c) => {
-      const week = await openWeekForEdit(c, now);
+      const week = await openWeekForEdit(c, now, userId);
       const has = await one("SELECT 1 FROM squad_players WHERE user_id = $1 LIMIT 1", [userId], c);
       if (has) throw new GameError("You already have a squad. Use transfers to change it.");
       const unique = [...new Set(playerIds)];
@@ -133,8 +165,7 @@ export async function makeTransfers(userId: number, swaps: { out: number; in: nu
   if (swaps.length === 0) throw new GameError("Choose at least one transfer.");
   return tx(
     async (c) => {
-      const week = await openWeekForEdit(c, now);
-      await q("SELECT id FROM users WHERE id = $1 FOR UPDATE", [userId], c);
+      const week = await openWeekForEdit(c, now, userId);
       const user = await one<{ joined_week: number | null }>("SELECT joined_week FROM users WHERE id = $1", [userId], c);
       const owned = await q<{ player_id: number; purchase_price: number }>("SELECT player_id, purchase_price FROM squad_players WHERE user_id = $1", [userId], c);
       if (owned.length === 0) throw new GameError("Pick your squad first.");
@@ -185,7 +216,7 @@ export async function makeTransfers(userId: number, swaps: { out: number; in: nu
 /** Save the starting eleven, bench order, captain and vice-captain for the next deadline. */
 export async function saveLineup(userId: number, entries: { playerId: number; slot: number; isCaptain: boolean; isVice: boolean }[], now: Date) {
   return tx(async (c) => {
-    await openWeekForEdit(c, now);
+    await openWeekForEdit(c, now, userId);
     const owned = await q<{ player_id: number; purchase_price: number; position: Position }>(
       "SELECT s.player_id, s.purchase_price, p.position FROM squad_players s JOIN players p ON p.id = s.player_id WHERE s.user_id = $1",
       [userId],
@@ -197,5 +228,5 @@ export async function saveLineup(userId: number, entries: { playerId: number; sl
     const errors = validateLineup(lineup);
     if (errors.length) throw new GameError(errors.join(" "));
     await writeLineup(c, userId, lineup, new Map(owned.map((o) => [o.player_id, o.purchase_price])));
-  });
+  }, { serializable: true });
 }

@@ -37,6 +37,13 @@ export const config = {
   get resendKey() {
     return env("RESEND_API_KEY");
   },
+  /** The email service's allowance (Resend free plan: 100 a day, 3,000 a month). */
+  get emailDayLimit() {
+    return Number(env("EMAIL_DAY_LIMIT", "100")) || 100;
+  },
+  get emailMonthLimit() {
+    return Number(env("EMAIL_MONTH_LIMIT", "3000")) || 3000;
+  },
   get emailFrom() {
     return env("EMAIL_FROM", "Far Post <login@example.com>");
   },

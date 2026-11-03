@@ -124,7 +124,7 @@ describe("live scoring, pending data, rule edits and corrections", () => {
   });
 
   it("keeps unknown numbers pending and finalises when blanks are resolved", async () => {
-    await storeDetail({ fixture: fixture("FT", 0, 0), players: [ln("GK0_0", "K0", { saves: null }), ln("FWD0_0", "K0", {})] });
+    await storeDetail({ fixture: fixture("FT", 0, 0), players: [ln("GK0_0", "K0", { saves: null }), ln("FWD0_0", "K0", {}), ln("GK1_0", "K1", {})] });
     await rescoreFixture(fid, at("2026-08-22T16:00:00Z"));
     const gk = await pts("GK0_0");
     expect(gk.pending).toEqual(["saves"]);
@@ -134,7 +134,7 @@ describe("live scoring, pending data, rule edits and corrections", () => {
     await rescoreFixture(fid, at("2026-08-26T00:00:00Z"));
     expect((await pts("GK0_0")).status).toBe("provisional");
     // The supplier fills the blank: complete data, 72 hours passed -> final.
-    await storeDetail({ fixture: fixture("FT", 0, 0), players: [ln("GK0_0", "K0", { saves: 4 }), ln("FWD0_0", "K0", {})] });
+    await storeDetail({ fixture: fixture("FT", 0, 0), players: [ln("GK0_0", "K0", { saves: 4 }), ln("FWD0_0", "K0", {}), ln("GK1_0", "K1", {})] });
     await rescoreFixture(fid, at("2026-08-26T00:00:00Z"));
     expect(await pts("GK0_0")).toMatchObject({ points: 2 + 1 + 5, status: "final" });
   });
@@ -158,7 +158,7 @@ describe("live scoring, pending data, rule edits and corrections", () => {
   });
 
   it("holds changes to final points for Ben's approval, then applies them with the original rules", async () => {
-    await storeDetail({ fixture: fixture("FT", 0, 0), players: [ln("GK0_0", "K0", { saves: 8 }), ln("FWD0_0", "K0", {})] });
+    await storeDetail({ fixture: fixture("FT", 0, 0), players: [ln("GK0_0", "K0", { saves: 8 }), ln("FWD0_0", "K0", {}), ln("GK1_0", "K1", {})] });
     expect((await pts("GK0_0")).points).toBe(8); // unchanged until approved
     const waiting = await waitingCorrections();
     expect(waiting).toHaveLength(1);

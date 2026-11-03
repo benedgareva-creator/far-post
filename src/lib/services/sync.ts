@@ -74,7 +74,7 @@ export async function upsertFixture(f: ProviderFixture, db: Db = pool()): Promis
   if (prev && VOID.has(prev.status) && !VOID.has(f.status)) {
     await q("DELETE FROM player_points WHERE fixture_id = $1", [prev.id], db);
     await q("DELETE FROM player_match_stats WHERE fixture_id = $1", [prev.id], db);
-    await q("UPDATE fixtures SET started = false, week_number = NULL, finished_at = NULL, recheck_stage = 0, data_complete = false WHERE id = $1", [prev.id], db);
+    await q("UPDATE fixtures SET started = false, week_fixed = false, week_number = NULL, finished_at = NULL, recheck_stage = 0, data_complete = false WHERE id = $1", [prev.id], db);
   }
   const row = await one<{ id: number }>(
     `INSERT INTO fixtures (provider_id, round_label, home_club_id, away_club_id, kickoff, status, minute, home_goals, away_goals, started, finished_at)
@@ -104,6 +104,7 @@ export async function syncFixtures(provider: FootballProvider, now: Date, db: Db
 }
 
 export async function refreshWeeks(fixtures: ProviderFixture[], now: Date, db: Db = pool()) {
+  await freezeDueWeeks(now, db);
   const launchRound = (await getSetting<number>("launch_round", db)) ?? 1;
   const byRound = new Map<number, ProviderFixture[]>();
   for (const f of fixtures) {
@@ -126,31 +127,63 @@ export async function refreshWeeks(fixtures: ProviderFixture[], now: Date, db: D
   await assignWeeks(db);
 }
 
+/** Fixes every deadline that is now within seven days, even when no schedule change arrived. */
+export async function freezeDueWeeks(now: Date, db: Db = pool()) {
+  await q("UPDATE weeks SET frozen = true WHERE NOT frozen AND deadline <= $1::timestamptz + interval '7 days'", [now], db);
+}
+
 /** Puts each match in the Week containing its actual kickoff (started matches keep their Week). */
 export async function assignWeeks(db: Db = pool(), onlyFixtureId?: number) {
   const weeks = (await q<{ number: number; deadline: Date; frozen: boolean }>("SELECT number, deadline, frozen FROM weeks ORDER BY number", [], db)).map((w) => ({ number: w.number, deadline: w.deadline, frozen: w.frozen }));
-  const fixtures = await q<{ id: number; kickoff: Date; status: string; started: boolean; week_number: number | null }>(
-    "SELECT id, kickoff, status, started, week_number FROM fixtures WHERE $1::int IS NULL OR id = $1",
+  const fixtures = await q<{ id: number; kickoff: Date; status: string; started: boolean; week_fixed: boolean; week_number: number | null }>(
+    "SELECT id, kickoff, status, started, week_fixed, week_number FROM fixtures WHERE $1::int IS NULL OR id = $1",
     [onlyFixtureId ?? null],
     db,
   );
   for (const f of fixtures) {
-    const w = assignFixtureWeek({ kickoff: f.kickoff, status: f.status, started: f.started, currentWeek: f.week_number }, weeks);
-    if (w !== f.week_number) await q("UPDATE fixtures SET week_number = $2 WHERE id = $1", [f.id, w], db);
+    const w = assignFixtureWeek({ kickoff: f.kickoff, status: f.status, weekFixed: f.week_fixed, currentWeek: f.week_number }, weeks);
+    const fix = f.started && w !== null;
+    if (w !== f.week_number || fix !== f.week_fixed) await q("UPDATE fixtures SET week_number = $2, week_fixed = $3 WHERE id = $1", [f.id, w, fix], db);
   }
 }
 
 /** Stores a fetched match's headline data and player numbers. Returns the fixture id. */
 export async function storeDetail(d: FixtureDetail, db: Db = pool()): Promise<{ fixtureId: number; newPlayers: number; corrections: number } | null> {
-  const fixtureId = await upsertFixture(d.fixture, db);
+  // Once a match's points are final, changes are held for Ben's approval (spec section 4). That
+  // includes the score itself, which decides clean sheets and goals conceded: keep the stored score
+  // and raise a correction instead of overwriting it.
+  const before = await one<{ id: number; home_goals: number | null; away_goals: number | null; final: boolean }>(
+    `SELECT f.id, f.home_goals, f.away_goals,
+            EXISTS (SELECT 1 FROM player_points p WHERE p.fixture_id = f.id AND p.status = 'final') AS final
+       FROM fixtures f WHERE f.provider_id = $1`,
+    [d.fixture.providerId],
+    db,
+  );
+  const isFinal = !!before?.final;
+  const scoreChanged =
+    isFinal && d.fixture.homeGoals !== null && d.fixture.awayGoals !== null &&
+    (before!.home_goals !== d.fixture.homeGoals || before!.away_goals !== d.fixture.awayGoals);
+  const headline = scoreChanged ? { ...d.fixture, homeGoals: before!.home_goals, awayGoals: before!.away_goals } : d.fixture;
+  const fixtureId = await upsertFixture(headline, db);
   if (!fixtureId) return null;
   await q("UPDATE fixtures SET last_fetched = now() WHERE id = $1", [fixtureId], db);
   await assignWeeks(db, fixtureId);
   let newPlayers = 0;
   let corrections = 0;
+  if (scoreChanged) {
+    const next = { home_goals: d.fixture.homeGoals, away_goals: d.fixture.awayGoals };
+    const waiting = await one<{ new_stats: unknown }>("SELECT new_stats FROM corrections WHERE fixture_id = $1 AND kind = 'score' AND status = 'waiting'", [fixtureId], db);
+    if (!waiting || JSON.stringify(waiting.new_stats) !== JSON.stringify(next)) {
+      await q("DELETE FROM corrections WHERE fixture_id = $1 AND kind = 'score' AND status = 'waiting'", [fixtureId], db);
+      await q(
+        "INSERT INTO corrections (fixture_id, player_id, kind, old_stats, new_stats, old_points, new_points) VALUES ($1, NULL, 'score', $2, $3, 0, 0)",
+        [fixtureId, JSON.stringify({ home_goals: before!.home_goals, away_goals: before!.away_goals }), JSON.stringify(next)],
+        db,
+      );
+      corrections++;
+    }
+  }
   if (!d.players) return { fixtureId, newPlayers, corrections };
-  // Once a match's points are final, changes are held for Ben's approval (spec section 4).
-  const isFinal = !!(await one("SELECT 1 FROM player_points WHERE fixture_id = $1 AND status = 'final' LIMIT 1", [fixtureId], db));
   for (const line of d.players) {
     let player = await one<{ id: number; club_id: number }>("SELECT id, club_id FROM players WHERE provider_id = $1", [line.playerProviderId], db);
     const club = await clubId(line.clubProviderId, db);
@@ -175,9 +208,9 @@ export async function storeDetail(d: FixtureDetail, db: Db = pool()): Promise<{ 
       const next = { minutes: line.minutes, goals: line.goals, assists: line.assists, saves: line.saves, yellow: line.yellow, red: line.red, own_goals: line.ownGoals, pen_saved: line.penSaved, pen_missed: line.penMissed };
       const changed = !prev || Object.entries(next).some(([k, v]) => prev[k] !== v);
       if (changed) {
-        const waiting = await one<{ new_stats: unknown }>("SELECT new_stats FROM corrections WHERE fixture_id = $1 AND player_id = $2 AND status = 'waiting'", [fixtureId, player!.id], db);
+        const waiting = await one<{ new_stats: unknown }>("SELECT new_stats FROM corrections WHERE fixture_id = $1 AND player_id = $2 AND kind = 'player' AND status = 'waiting'", [fixtureId, player!.id], db);
         if (!waiting || JSON.stringify(waiting.new_stats) !== JSON.stringify(next)) {
-          await q("DELETE FROM corrections WHERE fixture_id = $1 AND player_id = $2 AND status = 'waiting'", [fixtureId, player!.id], db);
+          await q("DELETE FROM corrections WHERE fixture_id = $1 AND player_id = $2 AND kind = 'player' AND status = 'waiting'", [fixtureId, player!.id], db);
           await q(
             "INSERT INTO corrections (fixture_id, player_id, old_stats, new_stats, old_points, new_points) VALUES ($1,$2,$3,$4,0,0)",
             [fixtureId, player!.id, JSON.stringify(prev ?? {}), JSON.stringify(next)],

@@ -44,6 +44,7 @@ export default async function Team({ searchParams }: { searchParams: Promise<{ w
             <a className="chip" href="/transfers" style={{ background: "var(--night)", color: "#fff" }}>Transfers</a>
           </div>
         )}
+        <p className="small"><a className="link" href="/rules">How points are scored</a></p>
         <LineupEditor
           initial={picks.map((p) => {
             const games = fx.get(clubMap.get(p.player_id)!) ?? [];
@@ -63,6 +64,7 @@ export default async function Team({ searchParams }: { searchParams: Promise<{ w
       <h1>My team</h1>
       {chips}
       <TeamPoints userId={user.id} week={week} result={row} />
+      <p className="small mt"><a className="link" href="/rules">How points are scored</a></p>
     </>
   );
 }

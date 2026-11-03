@@ -122,28 +122,36 @@ export async function clubFixturesForWeek(week: number) {
 }
 
 export async function myLeagues(userId: number) {
-  return q<{ id: number; name: string; code: string; start_week: number; members: string; rank: string | null; total: string | null }>(
+  return q<{ id: number; name: string; code: string; start_week: number; members: string; rank: string | null; total: string | null; tied: boolean }>(
     `WITH totals AS (
        SELECT m.league_id, m.user_id, COALESCE(sum(t.points), 0) AS total
          FROM league_members m JOIN leagues l ON l.id = m.league_id
          LEFT JOIN team_week_points t ON t.user_id = m.user_id AND t.week_number >= l.start_week
         GROUP BY m.league_id, m.user_id),
-     ranked AS (SELECT *, rank() OVER (PARTITION BY league_id ORDER BY total DESC) AS rank FROM totals)
+     ranked AS (SELECT *, rank() OVER (PARTITION BY league_id ORDER BY total DESC) AS rank,
+                       count(*) OVER (PARTITION BY league_id, total) > 1 AS tied FROM totals)
      SELECT l.id, l.name, l.code, l.start_week,
-            (SELECT count(*) FROM league_members x WHERE x.league_id = l.id) AS members, r.rank, r.total
+            (SELECT count(*) FROM league_members x WHERE x.league_id = l.id) AS members, r.rank, r.total, r.tied
        FROM leagues l JOIN ranked r ON r.league_id = l.id AND r.user_id = $1 ORDER BY l.name`,
     [userId],
   );
 }
 
+/**
+ * League table. Tie policy (the same on every screen): teams level on total points share a rank,
+ * and the next rank skips (1, 1, 3). Level teams are listed alphabetically.
+ */
 export async function standings(leagueId: number, week: number | null) {
-  return q<{ user_id: number; team_name: string | null; total: string; week_points: number | null; week_status: string | null }>(
-    `SELECT u.id AS user_id, u.team_name,
-            COALESCE((SELECT sum(t.points) FROM team_week_points t WHERE t.user_id = u.id AND t.week_number >= l.start_week), 0) AS total,
-            (SELECT t.points FROM team_week_points t WHERE t.user_id = u.id AND t.week_number = $2) AS week_points,
-            (SELECT t.status FROM team_week_points t WHERE t.user_id = u.id AND t.week_number = $2) AS week_status
-       FROM league_members m JOIN users u ON u.id = m.user_id JOIN leagues l ON l.id = m.league_id
-      WHERE m.league_id = $1 ORDER BY total DESC, u.team_name`,
+  return q<{ user_id: number; team_name: string | null; total: string; rank: string; tied: boolean; week_points: number | null; week_status: string | null }>(
+    `WITH t AS (
+       SELECT u.id AS user_id, u.team_name,
+              COALESCE((SELECT sum(t.points) FROM team_week_points t WHERE t.user_id = u.id AND t.week_number >= l.start_week), 0) AS total,
+              (SELECT t.points FROM team_week_points t WHERE t.user_id = u.id AND t.week_number = $2) AS week_points,
+              (SELECT t.status FROM team_week_points t WHERE t.user_id = u.id AND t.week_number = $2) AS week_status
+         FROM league_members m JOIN users u ON u.id = m.user_id JOIN leagues l ON l.id = m.league_id
+        WHERE m.league_id = $1)
+     SELECT t.*, rank() OVER (ORDER BY total DESC) AS rank, count(*) OVER (PARTITION BY total) > 1 AS tied
+       FROM t ORDER BY total DESC, team_name`,
     [leagueId, week],
   );
 }
